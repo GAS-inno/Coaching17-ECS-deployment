@@ -5,13 +5,17 @@ on:
   push:
     branches:
       - main
+  pull_request:
+    branches:
+      - main
 
 env:
   AWS_REGION: us-east-1
-  ECR_REPOSITORY: yeefei-flask-private-repository
+  ECR_REPOSITORY: group3-ecr
+  TF_VERSION: 1.6.0
 
 jobs:
-  build-and-push:
+  terraform-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
@@ -25,6 +29,20 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Plan
+        run: terraform plan -out=tfplan
+
+      - name: Terraform Apply (Create ECR)
+        run: terraform apply -target=aws_ecr_repository.ecr -auto-approve
+
       - name: Login to Amazon ECR (safer)
         id: login-ecr
         env:
@@ -35,6 +53,7 @@ jobs:
           aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
           # Expose the registry as a step output for downstream steps
           echo "registry=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com" >> $GITHUB_OUTPUT
+          
       - name: Build and push Docker image to ECR
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -45,3 +64,6 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Terraform Apply (Deploy ECS)
+        run: terraform apply -auto-approve
